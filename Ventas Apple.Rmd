@@ -1,0 +1,276 @@
+---
+title: "Ventas Apple"
+author: "Borja Fidalgo Martínez-Merello"
+date: "11/16/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r data, include=FALSE}
+library(forecast)
+library(xts)
+library(ggplot2)
+library(ggfortify)
+```
+
+
+## Introducción
+El objetivo de este informe es predecir las ventas de Apple para 2017 y 2018. Para dicha elaboración se ha extraido un dataset cuya fuente es Bloomberg que incluye los datos trimestrales desde el 2T de 2008 hasta el 3T del 2017. (IngresosApple.csv). A continuación trabajamos dicho dataset:
+
+```{r}
+rawData <- read.csv("IngresosApple.csv", sep = ";")
+```
+
+
+## Transformación de Data
+Transformamos a clase tipo zoo para poder trabajar con diferentes métodos de cara a analizar las series temporales.
+
+```{r}
+rawVentas <- rawData$Ingresos
+rawDate <- seq(as.Date("2008/04/01"), as.Date("2017/09/30"), by = "quarter")
+xVentas <- xts(rawVentas, order.by = rawDate)
+xVentas <- to.quarterly(xVentas)
+zVentas <- as.zoo(xVentas$xVentas.Open)
+names(zVentas) = "Ventas"
+```
+
+
+Generamos un gráfico que nos permite ver el desarrollo de las ventas de Apple durante los trimestres, como hemos indicado previamente de 2T de 2008 a 3T de 2017:
+
+```{r}
+df_new <- data.frame(value = as.vector(zVentas),
+                     time = time(zVentas))
+ggplot(df_new) + geom_point(aes(x = time,y = value)) + geom_line(aes(x = time,y = value)) + ylab("Ventas") + ggtitle("Ventas Trimestrales Apple") + xlab("Trimestres")
+```
+
+
+A continuación, realizamos una tranformación logarítmica con el objetivo de modificar la varianza a constante. De esta manera trabajaremos sobre los modelos ETS y ARIMA respectivamente, además compararemos los resultados dentro del ETS realizándolo sin la transformación logarítmica y con ella, respectivamente para cada análisis:
+
+```{r}
+zlVentas = log(zVentas)
+df_newl <- data.frame(value = as.vector(zlVentas),
+                     time = time(zlVentas))
+ggplot(df_newl) + geom_point(aes(x = time,y = value)) + geom_line(aes(x = time,y = value)) + ylab("Ventas") + ggtitle("Ventas Trimestrales LOG Apple") + xlab("Trimestres")
+```
+
+Como podemos observar se trata de una serie temporal no estacional ya que, sufre una tendencia y no es uniforme pero si tiende a ser estacionaria ya que, la varianza ha tendido a estandarizarse, a diferencia de la no logarítmica que no es tan suavizada y es más agresiva.
+
+
+Definimos el df, a `ts`, para establecer la serie temporal. Y los disponemos gráficamente por cuatrimestres a continuación:
+
+```{r}
+tsVentas = ts(coredata(zVentas), start = c(2008, 1), frequency = 4)
+ggfreqplot(tsVentas,freq = 4,nrow = 1,facet.labeller = c("1T","2T","3T","4T")) + ggtitle("Ventas Trimestrales")
+```
+
+```{r}
+tsVentasLog = ts(coredata(zlVentas), start = c(2008, 1), frequency = 4)
+ggfreqplot(tsVentasLog,freq = 4,nrow = 1,facet.labeller = c("1T","2T","3T","4T")) + ggtitle("Ventas Trimestrales")
+```
+
+
+## Series Temporales
+A continuación, pintamos el modelo `ts` sin dividirlo por cuatrimestres, es decir en el plano general.
+
+```{r}
+plot(tsVentas)
+```
+
+```{r}
+plot(tsVentasLog)
+```
+
+Observamos los mismos cambios que en los gráficos anteriores.
+
+
+```{r}
+stl(tsVentas[,1], s.window = "periodic")
+```
+
+```{r}
+stl(tsVentasLog[,1], s.window = "periodic")
+```
+
+```{r}
+plot(stl(tsVentas[,1], s.window = "periodic"))
+```
+
+```{r}
+plot(stl(tsVentasLog[,1], s.window = "periodic"))
+```
+
+Como podemos observador en la logarítmica el alisado de la tendencia en la comparativa con la normal es claro.
+
+
+## Modelo ETS
+Procedemos a definir el modelo ETS, donde escogemos el número de observaciones, en este caso 3, escogemos una submuestra para ambos modelos.
+
+```{r}
+cOmit = 3
+nObs = length(zVentas)
+oVentas <- window(zVentas,start = index(zVentas[1]),end = index(zVentas[nObs - cOmit]))
+```
+
+```{r}
+cOmit = 3
+nObsLog = length(zlVentas)
+oVentasLog <- window(zlVentas,start = index(zlVentas[1]),end = index(zlVentas[nObsLog - cOmit]))
+```
+
+
+Procedemos a aplicar el modelo automaticamente para seleccionar el más óptimo y definimos el pronóstico, por último se presentan los resultados obtenidos:
+
+```{r}
+etsfit <- ets(oVentas)
+fventas.ets = forecast(etsfit)
+
+summary(fventas.ets)
+```
+
+```{r}
+etsfitLog <- ets(oVentasLog)
+fventas.etsLog = forecast(etsfitLog)
+
+summary(fventas.etsLog)
+```
+
+
+Vemos gráficamente el pronóstico obtenido para la no logarítmica y la que si lo aplica a continuación.
+
+```{r}
+plot(fventas.ets)
+lines(window(zVentas),type = "o")
+```
+
+```{r}
+plot(fventas.etsLog)
+lines(window(zlVentas),type = "o")
+```
+
+Como podemos observar, la logarítmica tiene un mayor acierto gráficamente ya que persigue de una manera más fiel el últmo registro de las ventas y predice una disminución de los ingresos en los periodos posteriores frente a la no logarítmica.
+
+
+A continuación podemos observar las matrices de ambos modelos tanto para la situación actual `[,1]` como para el forecast `[,2]`:
+
+```{r}
+matrix(c(fventas.ets$mean[1:cOmit],zVentas[(nObs - cOmit + 1):nObs]),ncol = 2)
+```
+
+```{r}
+matrix(c(fventas.etsLog$mean[1:cOmit],zlVentas[(nObs - cOmit + 1):nObs]),ncol = 2)
+```
+
+
+### Predicciones y precisión
+
+```{r}
+etsfit <- ets(window(tsVentas,end = 2016 + 3/4))
+fventas.ets = forecast(etsfit,h = cOmit)
+#accuracy(etsfit,window(tsVentas,start=2017))
+forecast:::testaccuracy(fventas.ets$mean,window(tsVentas,start = 2017),test = NULL, d = NULL, D = NULL)
+```
+
+```{r}
+etsfit <- ets(window(tsVentas,end = 2016 + 3/4))
+fventas.etsLog = forecast(etsfitLog,h = cOmit)
+#accuracy(etsfit,window(tsVentas,start=2017))
+forecast:::testaccuracy(fventas.etsLog$mean,window(tsVentasLog,start = 2017),test = NULL, d = NULL, D = NULL)
+```
+
+
+## Modelo ARIMA
+Definimos automáticamente el modelo ARIMA para lograr obtener el más óptimo.
+
+```{r}
+fit1 = auto.arima(oVentasLog,lambda = 0)
+summary(fit1)
+```
+
+```{r}
+ggtsdisplay(fit1$residuals)
+```
+
+Vemos que exite algo de ruido blanco ya que, no tienen correlaciones el ACF y el PACF, dentro de las bandas azules, por lo que no hay autocorrelaciones.
+
+
+```{r}
+Box.test(fit1$residuals,lag = 4, fitdf = 3, type = "Lj")
+```
+
+```{r}
+Box.test(fit1$residuals,lag = 8, fitdf = 3, type = "Lj")
+```
+
+```{r}
+Box.test(fit1$residuals,lag = 12, fitdf = 3, type = "Lj")
+```
+
+
+Vemos que el segundo test presenta un p-valor de 0.45, pero ninguno 0 por lo que no se rechaza en ningún momento.
+
+```{r}
+fventas.arima = forecast(fit1)
+```
+
+
+Vemos gráficamente el modelo predictivo de ARIMA que ya, a prirori, presenta mayor error que el ETS logarítmico visto previamente.
+
+```{r}
+ggplot(df_newl) + geom_point(aes(x = time,y = value)) + geom_line(aes(x = time,y = value)) + geom_forecast(fventas.arima,alpha = 0.4) + ggtitle("ARIMA: Predicción Apple")
+```
+
+```{r}
+fventas.arima
+```
+
+
+## Forecast
+Presentamos los 3 pronósticos realizados:
+
+ETS
+```{r}
+etsfit <- ets(window(tsVentas,end = 2016 + 3/4))
+fventas.ets = forecast(etsfit,h = cOmit)
+#accuracy(etsfit,window(tsVentas,start=2017))
+forecast:::testaccuracy(fventas.ets$mean,window(tsVentas,start = 2017),test = NULL, d = NULL, D = NULL)
+```
+
+ETS logarítmico
+```{r}
+forecast:::testaccuracy(fventas.etsLog$mean,window(tsVentasLog,start = 2017),test = NULL, d = NULL, D = NULL)
+```
+
+ARIMA
+```{r}
+forecast:::testaccuracy(fventas.arima$mean,window(tsVentas,start = 2017),test = NULL, d = NULL, D = NULL)
+```
+
+
+El que menor error cuadrático medio (RMSE) muestra es el ETS logarítmico, así como error medio de porcentaje absoluto (MAPE). Por lo que podemos concluir aunque ya se podía preveer gráficamente se debe escoger ETS, pero además de ETS el modelo logarítmico ya que predice de una manera mucho más precisa el modelo de Ingresos de Apple.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
